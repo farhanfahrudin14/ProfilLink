@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Admin Profil</title>
+  <style>
+    :root{ --bg1:#0f1724; --card: rgba(255,255,255,0.03); --accent:#06b6d4; --muted:#cbd5e1 }
+    html,body{height:100%;margin:0;background:linear-gradient(135deg,var(--bg1),#071029);font-family:system-ui,Segoe UI,Roboto,Arial;color:#e6eef8}
+    .wrap{min-height:100%;display:flex;align-items:center;justify-content:center;padding:20px}
+    .card{width:100%;max-width:640px;background:var(--card);padding:18px;border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,0.5)}
+    h2{margin:6px 0 12px}
+    label{display:block;font-size:13px;color:var(--muted);margin-top:10px}
+    input[type="text"], textarea {width:100%;padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.04);background:transparent;color:inherit}
+    textarea{resize:vertical;min-height:64px}
+    .row{display:flex;gap:10px;align-items:center}
+    .avatarPreviewBox{width:96px;height:96px;border-radius:12px;overflow:hidden;background:#0b1220;flex:0 0 96px;display:flex;align-items:center;justify-content:center}
+    .avatarPreviewBox img{width:100%;height:100%;object-fit:cover;display:block}
+    .buttons{display:flex;gap:8px;margin-top:12px}
+    button{padding:10px 12px;border-radius:8px;border:none;background:var(--accent);color:#042026;font-weight:700;cursor:pointer}
+    .muted{font-size:13px;color:rgba(230,238,248,0.65)}
+    .linksArea{margin-top:12px}
+    .linkRow{display:flex;gap:8px;align-items:center;margin-top:8px}
+    .linkRow input{flex:1}
+    .smallBtn{padding:8px 10px;background:transparent;border:1px solid rgba(255,255,255,0.06);border-radius:8px;color:inherit;cursor:pointer}
+    .controls{display:flex;gap:6px;flex-wrap:wrap;margin-top:12px}
+    a.public{color:var(--accent);text-decoration:none}
+    .foot{margin-top:12px;color:rgba(230,238,248,0.6);font-size:13px}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h2>Pengaturan Profil</h2>
+
+      <label>Foto Profil</label>
+      <div class="row">
+        <div class="avatarPreviewBox" id="avatarPreviewBox">
+          <!-- preview img or initial -->
+          <span id="avatarPreviewInitial" class="muted">A</span>
+          <img id="avatarPreviewImg" style="display:none" alt="preview">
+        </div>
+        <div style="flex:1">
+          <input id="avatarInput" type="file" accept="image/*">
+          <div class="muted" style="margin-top:6px">Gambar akan dicrop center dan di-resize agar tampil responsif.</div>
+        </div>
+      </div>
+
+      <label>Nama</label>
+      <input id="nameInput" type="text" placeholder="Nama Anda">
+
+      <label>Bio</label>
+      <textarea id="bioInput" placeholder="Bio singkat..."></textarea>
+
+      <div class="linksArea">
+        <label>Links</label>
+        <div id="linksContainer"></div>
+        <div style="margin-top:8px">
+          <button id="addLinkBtn" class="smallBtn">+ Tambah Link</button>
+        </div>
+      </div>
+
+      <div class="controls">
+        <button id="saveBtn">💾 Simpan</button>
+        <button id="exportBtn" class="smallBtn">⬇️ Export JSON</button>
+        <button id="importBtn" class="smallBtn">⬆️ Import JSON</button>
+        <input id="importFile" type="file" accept="application/json" style="display:none">
+        <button id="resetBtn" class="smallBtn">⚠️ Reset</button>
+        <a href="index.html" class="public">🔗 Lihat Halaman Publik</a>
+      </div>
+
+      <div class="foot">Data disimpan di browser (localStorage). Untuk membagikan, upload dua file ke hosting statis.</div>
+    </div>
+  </div>
+
+  <script>
+    (function(){
+      const STORAGE_KEY = 'linkhub_data_v1';
+      const el = id => document.getElementById(id);
+
+      // default structure
+      let data = JSON.parse(localStorage.getItem(STORAGE_KEY) || JSON.stringify({
+        name: '',
+        bio: '',
+        avatar: null,
+        links: []
+      }));
+
+      // --- init UI ---
+      el('nameInput').value = data.name || '';
+      el('bioInput').value = data.bio || '';
+      updateAvatarPreview();
+
+      // render existing links
+      function renderLinks(){
+        const wrap = el('linksContainer');
+        wrap.innerHTML = '';
+        (data.links || []).forEach((ln, idx) => {
+          const row = document.createElement('div');
+          row.className = 'linkRow';
+          row.innerHTML = `
+            <input type="text" class="linkTitle" placeholder="Judul" value="${escapeHtml(ln.title||'')}">
+            <input type="text" class="linkUrl" placeholder="URL (ex: https://...)" value="${escapeHtml(ln.url||'')}">
+            <button class="smallBtn" data-index="${idx}" data-action="del">Hapus</button>
+          `;
+          wrap.appendChild(row);
+        });
+      }
+      renderLinks();
+
+      // add link
+      el('addLinkBtn').addEventListener('click', () => {
+        data.links = data.links || [];
+        data.links.push({title:'', url:''});
+        renderLinks();
+      });
+
+      // delegate delete link
+      el('linksContainer').addEventListener('click', e => {
+        const btn = e.target.closest('button[data-action="del"]');
+        if (!btn) return;
+        const idx = Number(btn.dataset.index);
+        if (!isNaN(idx)) {
+          data.links.splice(idx,1);
+          renderLinks();
+        }
+      });
+
+      // avatar upload -> crop center and resize
+      el('avatarInput').addEventListener('change', e => {
+        const f = e.target.files?.[0];
+        if (!f) return;
+        // simple size check (optional): if >6MB warn; still process
+        const reader = new FileReader();
+        reader.onload = ev => {
+          const img = new Image();
+          img.onload = () => {
+            const size = 600; // output square px
+            const canvas = document.createElement('canvas');
+            canvas.width = size; canvas.height = size;
+            const ctx = canvas.getContext('2d');
+
+            // crop center square from original
+            const minSide = Math.min(img.width, img.height);
+            const sx = Math.round((img.width - minSide) / 2);
+            const sy = Math.round((img.height - minSide) / 2);
+
+            ctx.drawImage(img, sx, sy, minSide, minSide, 0, 0, size, size);
+
+            // compress to jpeg for smaller size
+            try {
+              const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+              data.avatar = dataUrl;
+            } catch(err) {
+              // fallback to png if jpeg fails
+              data.avatar = canvas.toDataURL('image/png');
+            }
+            updateAvatarPreview();
+          };
+          img.onerror = () => alert('Gagal membaca gambar. Coba file lain.');
+          img.src = ev.target.result;
+        };
+        reader.readAsDataURL(f);
+      });
+
+      function updateAvatarPreview(){
+        const imgEl = el('avatarPreviewImg');
+        const initEl = el('avatarPreviewInitial');
+        if (data.avatar) {
+          imgEl.src = data.avatar;
+          imgEl.style.display = 'block';
+          initEl.style.display = 'none';
+        } else {
+          imgEl.style.display = 'none';
+          initEl.style.display = 'flex';
+          initEl.textContent = (data.name || ' ')[0]?.toUpperCase() || 'A';
+        }
+      }
+
+      // save button -> read UI values, normalize links, store
+      el('saveBtn').addEventListener('click', () => {
+        // get name & bio
+        data.name = el('nameInput').value.trim();
+        data.bio = el('bioInput').value.trim();
+
+        // read links inputs
+        const rows = Array.from(el('linksContainer').querySelectorAll('.linkRow'));
+        const newLinks = [];
+        rows.forEach(row => {
+          const title = (row.querySelector('.linkTitle')?.value || '').trim();
+          const url = (row.querySelector('.linkUrl')?.value || '').trim();
+          if (title || url) {
+            newLinks.push({ title, url });
+          }
+        });
+        data.links = newLinks;
+
+        // store
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+        updateAvatarPreview();
+        alert('Data berhasil disimpan.');
+      });
+
+      // export json
+      el('exportBtn').addEventListener('click', () => {
+        const blob = new Blob([JSON.stringify(data, null, 2)], {type:'application/json'});
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = 'linkhub-export.json';
+        a.click();
+        URL.revokeObjectURL(url);
+      });
+
+      // import json
+      el('importBtn').addEventListener('click', () => el('importFile').click());
+      el('importFile').addEventListener('change', e => {
+        const f = e.target.files?.[0]; if (!f) return;
+        const r = new FileReader();
+        r.onload = ev => {
+          try {
+            const obj = JSON.parse(ev.target.result);
+            // basic validation
+            if (typeof obj !== 'object' || !('links' in obj)) { alert('File JSON tidak valid'); return; }
+            data = {
+              name: obj.name || '',
+              bio: obj.bio || '',
+              avatar: obj.avatar || null,
+              links: Array.isArray(obj.links) ? obj.links : []
+            };
+            // apply to UI
+            el('nameInput').value = data.name;
+            el('bioInput').value = data.bio;
+            updateAvatarPreview();
+            renderLinks();
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+            alert('Import berhasil.');
+          } catch(err) { alert('Gagal membaca JSON: ' + err.message); }
+        };
+        r.readAsText(f);
+      });
+
+      // reset
+      el('resetBtn').addEventListener('click', () => {
+        if (!confirm('Reset semua data?')) return;
+        data = { name:'', bio:'', avatar:null, links:[] };
+        el('nameInput').value = '';
+        el('bioInput').value = '';
+        updateAvatarPreview();
+        renderLinks();
+        localStorage.removeItem(STORAGE_KEY);
+        alert('Data di-reset.');
+      });
+
+      // small helper to escape inserted values in inputs
+      function escapeHtml(s){
+        return String(s || '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+      }
+      // expose escapeHtml to renderLinks
+      window.escapeHtml = escapeHtml;
+    })();
+  </script>
+</body>
+</html>
